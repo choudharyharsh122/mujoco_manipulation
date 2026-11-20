@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/google-deepmind/mujoco_menagerie",
+  "commit": "4d038b3feae26ec82b46a4d586379114012a8ac7",
+  "path": "universal_robots_ur10e/ur10e.xml",
+  "sha256": "a8f709df340788033d497ff7d892fdecab4f6cc9c36299a00f57efa9f25e0744",
+  "matches_commit": true
+}

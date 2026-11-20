@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "mission-mujoco"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["mujoco==3.3.5", "numpy>=1.26,<3", "scipy>=1.12,<2", "matplotlib>=3.8,<4"]
+[project.optional-dependencies]
+test = ["pytest>=8"]
+video = ["imageio>=2.34", "imageio-ffmpeg>=0.5"]
+[project.scripts]
+mission-sim = "mission_mujoco.cli:main"
+[tool.setuptools]
+packages = ["mission_mujoco"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+mission_mujoco = ["assets/*"]

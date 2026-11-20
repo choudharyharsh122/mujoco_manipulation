@@ -1,0 +1,34 @@
+{
+  "date": "2026-09-30",
+  "scope": "executable pilot; incomplete principal manuscript OCP",
+  "source_sha256": {
+    "mission_mujoco/translator.py": "0b13ff59b1912a2d72da509d7f2a3db608ed451ecbb31ab6cf13d9c460acc8e4",
+    "mission_mujoco/grasp.py": "45a59f3a90f9ea2e9c30e4c7f0b8181777c8016be32869fd60fa93674dd5d7ff",
+    "mission_mujoco/cli.py": "d6914366d5d8bd9120dd1e739c324abd51d89a21faaa1ee7ba13daab7c8196d5",
+    "mission_mujoco/planning.py": "8cfe050f37ba07e446fa869e1756e612236e3db80becb6667833bb504a283f22",
+    "mission_mujoco/grounding.py": "7eb84dc545427bcc89b351360aeb2c1dd83c9a3d23bc27d7c876f282a43020a4",
+    "mission_mujoco/learning.py": "b90aaea94203baf3351090ba9baeb8a3847edea2b81deae1b719b27397b67766",
+    "mission_mujoco/benchmarks.py": "09dda980341f86c80355b1f2380449bc38c647381a4219c3fc9620e5df04ef59",
+    "mission_mujoco/execution.py": "884e212e928e58969fd8938a74a6e8e70a19b9361fc4522edaa4207767398bd3",
+    "mission_mujoco/controller.py": "a50b791dd8f32fcbfba3947b1d61bc4bfbf26e46df49d4f8455015d04c429a33",
+    "mission_mujoco/physics.py": "96f7c28697583cc553fdd38412c6aadbd7b493cda4220723fc125986fba4dcea",
+    "mission_mujoco/model.py": "585c6baa3a94cba63430d92719452a8f484cbb96bc7381f138f0f5485ecc7a44",
+    "mission_mujoco/geometry.py": "59cf93d0fbce12e3cda5dc53a472291dfe06f28d21e6e525ed4e77238baf4067",
+    "mission_mujoco/__init__.py": "4be7275f46bdbe135c411810d402bc216fab4680bdf052fb6157929bdeafab23",
+    "mission_mujoco/assets/upstream_README.md": "69af5118815feba60c683415231fcd2c27d4a240c9e613731596583440a96ed3",
+    "mission_mujoco/assets/upstream_LICENSE": "5ec71ccf66c8d03261448f2441a586765b97f2248c860a1ae19689fb1c45cee6",
+    "mission_mujoco/assets/provenance.json": "5493908a67e9ac31f3f6a53163df40c371deaccbbf05abd50ca3dad1576afa98",
+    "mission_mujoco/assets/upstream_ur10e.xml": "a8f709df340788033d497ff7d892fdecab4f6cc9c36299a00f57efa9f25e0744"
+  },
+  "evaluated_runs": [
+    "b0_settled",
+    "color_settled",
+    "letter_settled",
+    "b1_settled_resume"
+  ],
+  "verification_passed": false,
+  "task_audit_passes": [
+    "b0",
+    "letter"
+  ]
+}

@@ -1,0 +1,8 @@
+# Verified Python 3.12 environment; Linux headless EGL for video.
+mujoco==3.3.5
+numpy==2.3.5
+scipy==1.17.0
+matplotlib==3.11.1
+pytest==9.1.1
+imageio==2.38.0
+imageio-ffmpeg==0.6.0

@@ -1,0 +1,1 @@
+Source-only download fallback. Includes implementation, bundled assets, tests, reproduction scripts and reports. Raw results and videos are omitted; obtain mujoco_repo_rebuilt.zip for those. This repackaging does not change the documented partial implementation or failed full verification protocol.
