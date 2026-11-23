@@ -100,6 +100,28 @@ class Executor:
             else self.w.blockpos(d) + [0, 0, SIDE]
         )
 
+    def move_empty_targets(self, block, start=None):
+        """Return the named waypoints for approaching an unheld block."""
+        target = self.w.blockpos(block) + [0, 0, 0.12]
+        start = self.w.pose()[0] if start is None else start
+        return (
+            ("retreat", np.array([*start[:2], self.cruise])),
+            ("transit", np.array([*target[:2], self.cruise])),
+            ("pregrasp", target),
+        )
+
+    def pick_lift_descent_target(self, block):
+        return self.w.blockpos(block) + [0, 0, 0.003]
+
+    def move_holding_targets(self, destination, start=None):
+        center = self.support_center(destination)
+        start = self.w.pose()[0] if start is None else start
+        return (
+            ("lifted transit height", np.array([*start[:2], self.cruise])),
+            ("carry", np.array([*center[:2], self.cruise])),
+            ("preplace", center + [0, 0, 0.12]),
+        )
+
     @traced("SYMBOLIC action (type, block, destination) becomes physical phases and MPC targets")
     def execute(self, action, settle_all=False):
         kind, b, d = action
@@ -130,10 +152,8 @@ class Executor:
             if kind == "MoveEmpty":
                 if self.held is not None:
                     raise RuntimeError("MoveEmpty precondition")
-                target = w.blockpos(b) + [0, 0, 0.12]
-                cost += self.reach([*w.pose()[0][:2], self.cruise], 0, "retreat")
-                cost += self.reach([*target[:2], self.cruise], 0, "transit")
-                cost += self.reach(target, 0, "pregrasp")
+                for phase, target in self.move_empty_targets(b):
+                    cost += self.reach(target, 0, phase)
                 new_anchor = ("pre", b)
             elif kind == "PickLift":
                 if (
@@ -143,7 +163,7 @@ class Executor:
                 ):
                     raise RuntimeError("PickLift precondition")
                 self.allowed_block = b
-                target = w.blockpos(b) + [0, 0, 0.003]
+                target = self.pick_lift_descent_target(b)
                 certificate = closure()
                 load = capacity()
                 record["closure"] = certificate
@@ -172,13 +192,8 @@ class Executor:
             elif kind == "MoveHolding":
                 if self.held != b:
                     raise RuntimeError("MoveHolding precondition")
-                center = self.support_center(d)
-                target = center + [0, 0, 0.12]
-                cost += self.reach(
-                    [*w.pose()[0][:2], self.cruise], 0.038, "lifted transit height", b
-                )
-                cost += self.reach([*center[:2], self.cruise], 0.038, "carry", b)
-                cost += self.reach(target, 0.038, "preplace", b)
+                for phase, target in self.move_holding_targets(d):
+                    cost += self.reach(target, 0.038, phase, b)
                 new_anchor = ("above", d)
             elif kind == "PlaceRelease":
                 if (
