@@ -37,7 +37,7 @@ def cells():
 def scene(
     supports=None,
     mass_scale=1.0,
-    friction=1.0,
+    friction=3.0,
     timestep=0.002,
     impratio=1.0,
     support_solref=0.02,
