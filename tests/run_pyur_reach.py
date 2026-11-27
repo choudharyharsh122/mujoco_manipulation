@@ -16,13 +16,20 @@ DEFAULT_OFFSETS = [(0.0, 0.0, 0.03), (0.02, 0.0, 0.03), (0.02, 0.0, 0.01)]
 # PyBullet RG6 jaws sweep downward as they close. This fixture's measured
 # open-jaw offset leaves both fingers room to clear the support.
 RG6_OPEN_JAW_Z_OFFSET = 0.047
+# The 75 mm service setting puts the knuckle at 0 rad. The URDF geometry
+# gives about 38 mm less pad sweep than the 150 mm setting at -0.6 rad.
+RG6_HALF_OPEN_JAW_Z_OFFSET = 0.009
+GRASP_XY_TOLERANCE = 0.001
+TWO_BLOCK_NAMES = ("mission_block", "mission_block_blue")
+TWO_BLOCK_SOURCES = {0: "p0c0", 1: "p0c1"}
+TWO_BLOCK_GOAL = ("p1c1", "p1c0")
 
 
 def send(connection, seq, **fields):
     connection.sendall(json.dumps({"seq": seq, **fields}, allow_nan=False).encode() + b"\n")
 
 
-def make_controller(approach=False):
+def make_controller(approach=False, two_block=False):
     # Prefer this checkout over another installation in the Python environment.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     import mujoco
@@ -43,9 +50,39 @@ def make_controller(approach=False):
             orientation_in_reference_frame = R_DOWN @ self.w.orientation.T @ R
             return super().tracking(q, p, orientation_in_reference_frame, qref, target)
 
-    supports = {0: "p0c0"} if approach else {}
-    world = ReachWorld(supports=supports, config=Config(velocity_limit=0.05))
+    supports = TWO_BLOCK_SOURCES if two_block else {0: "p0c0"} if approach else {}
+    world = ReachWorld(supports=supports, config=Config(velocity_limit=0.05, slew=0.01))
     return mujoco, np, world, ReachMPC(world, horizon=1, maxiter=3)
+
+
+def plan_two_block_swap(world):
+    from mission_mujoco.execution import Executor
+    from mission_mujoco.geometry import CandidateGeometry
+    from mission_mujoco.learning import Models
+    from mission_mujoco.planning import Planner
+
+    models = Models()
+    executor = Executor(world, models, plot_dir=None, plot_mode="none")
+    if executor.supports != TWO_BLOCK_SOURCES:
+        raise RuntimeError(f"Unexpected initial supports in the predictor: {executor.supports}")
+    planner = Planner(models, geometry=CandidateGeometry(world))
+    sites = [*TWO_BLOCK_SOURCES.values(), *TWO_BLOCK_GOAL]
+    plan, _ = planner.solve(executor.supports, [(TWO_BLOCK_GOAL, 0.0)], sites,
+                            anchor=executor.anchor, held=executor.held)
+    kinds = ("MoveEmpty", "PickLift", "MoveHolding", "PlaceRelease")
+    transfers = []
+    for index in range(0, len(plan), len(kinds)):
+        actions = plan[index:index + len(kinds)]
+        if tuple(action[0] for action in actions) != kinds:
+            raise RuntimeError(f"Expected a complete transfer, got {actions}")
+        _, block, destination = actions[-1]
+        if any(action[1] != block for action in actions) or actions[2][2] != destination:
+            raise RuntimeError(f"Inconsistent transfer in planned actions: {actions}")
+        transfers.append((block, destination))
+    if sorted(transfers) != list(enumerate(TWO_BLOCK_GOAL)):
+        raise RuntimeError(f"Expected two direct transfers for the color swap, got {transfers}")
+    print(f"Two-block planner actions: {plan}", flush=True)
+    return executor, plan, iter(transfers)
 
 
 def main():
@@ -58,6 +95,7 @@ def main():
     mode.add_argument("--pick", action="store_true", help="Descend, grasp, and verify a short lift from pregrasp")
     mode.add_argument("--carry", action="store_true", help="Pick, hold for three seconds, then carry to preplace")
     mode.add_argument("--place", action="store_true", help="Approach, pick, carry, and release in one run")
+    mode.add_argument("--two-block", action="store_true", help="Plan and execute the two-block color derangement")
     grasp_mode = parser.add_mutually_exclusive_group()
     grasp_mode.add_argument("--baseline-grasp", action="store_true",
                             help="Use the centered grasp with no wrist tilt (default)")
@@ -72,6 +110,8 @@ def main():
                         metavar=("DX", "DY", "DZ"),
                         help="Repeat for multiple targets. Offsets are in meters from the starting tool position.")
     args = parser.parse_args()
+    args.place = args.place or args.two_block
+    open_jaw_z_offset = RG6_HALF_OPEN_JAW_Z_OFFSET if args.two_block else RG6_OPEN_JAW_Z_OFFSET
     carry = args.carry or args.place
     pick = args.pick or carry
     mission = args.approach or pick
@@ -83,14 +123,23 @@ def main():
         parser.error("--ignore-slip requires --place")
     if mission and args.offset:
         parser.error("--offset is only for the free-space reach")
-    controller = None if args.pulse else make_controller(mission)
+    controller = None if args.pulse else make_controller(mission, args.two_block)
     approaching = args.approach or args.place
     grasp_orientation = None
+    grasp_xy_offset = [0.003, -0.004] if args.offset_grasp else [0.0, 0.0]
     if mission:
         from run_pyur_approach import plan_approach
 
-        executor, plan = plan_approach(controller[2])
-        _, block, _ = plan[0]
+        if args.two_block:
+            from mission_mujoco.model import cells
+
+            source_centers = cells()
+            executor, plan, transfers = plan_two_block_swap(controller[2])
+            block, destination = next(transfers)
+            approach_orientation = controller[2].orientation.copy()
+        else:
+            executor, plan = plan_approach(controller[2])
+            _, block, _ = plan[0]
         if args.offset_grasp:
             from scipy.spatial.transform import Rotation
 
@@ -101,7 +150,7 @@ def main():
         if pick:
             print("Grasp: shifted (+3/-4 mm, -2 deg)" if args.offset_grasp
                   else "Grasp: baseline (centered target, no wrist tilt)", flush=True)
-        if carry:
+        if carry and not args.two_block:
             kind, carry_block, destination = plan[2]
             if kind != "MoveHolding" or carry_block != block:
                 raise RuntimeError(f"Expected a MoveHolding action for block {block}: {plan}")
@@ -120,6 +169,9 @@ def main():
     settled_position = None
     phases = None
     step_limit = 5000 if args.place else 2500 if carry else 900 if mission else 300
+    placed = {}
+    if args.two_block:
+        step_limit *= 2
     targets = None
     target_index = 0
     solve_times = []
@@ -157,16 +209,38 @@ def main():
                     world.data.qpos[:6] = np.asarray(state["q"])[order]
                     world.data.qvel[:6] = np.asarray(state["qd"])[order]
                     world.last_u[:] = np.asarray(state["last_command"])[order]
+                    if args.two_block:
+                        block_states = state.get("blocks")
+                        if not isinstance(block_states, dict) or set(block_states) != set(TWO_BLOCK_NAMES):
+                            raise RuntimeError("Expected both named blocks from the PyUR --two-block bridge")
+                        for index, name in enumerate(TWO_BLOCK_NAMES):
+                            block_state = block_states[name]
+                            position = np.asarray(block_state["position"]) * [-1, -1, 1]
+                            x, y, z, w = block_state["orientation"]
+                            # Convert base_link XYZW to MuJoCo WXYZ after a half-turn about Z.
+                            world.data.joint(f"free{index}").qpos[:] = [*position, -z, -y, x, w]
+                            if index in placed:
+                                original = placed[index]
+                                if (np.linalg.norm(position - original) > 0.005
+                                        or block_state["destination_load"] < 0.2):
+                                    raise RuntimeError(f"Previously placed block {name} moved or lost support")
+                        if state["active_block"] != TWO_BLOCK_NAMES[block]:
+                            send(connection, seq, select_block=TWO_BLOCK_NAMES[block])
+                            continue
+                    centering_grasp = pick and not approaching and not closing and target_index == 0
                     if mission:
                         # The corresponding PyUR base_link is rotated 180 degrees around Z.
                         actual_pose = np.asarray(state["grasp_center_base_link"]) * [-1, -1, 1]
                         block_pose = np.asarray(state["block_center_base_link"]) * [-1, -1, 1]
                         if not np.isfinite([actual_pose, block_pose]).all():
                             raise ValueError("Invalid RG6 or block feedback")
-                        if approaching and actual_pose[2] - block_pose[2] < 0.085:
+                        retreating_after_release = args.two_block and placed and target_index == 0
+                        if approaching and not retreating_after_release and actual_pose[2] - block_pose[2] < 0.085:
                             raise RuntimeError("Grasp center is too close to the block for pregrasp")
                         if block_start is None:
-                            if np.linalg.norm(block_pose - world.blockpos(block)) > 0.015:
+                            source = (source_centers[TWO_BLOCK_SOURCES[block]]
+                                      if args.two_block else world.blockpos(block))
+                            if np.linalg.norm(block_pose - source) > 0.015:
                                 raise RuntimeError("PyUR block is outside the expected source cell")
                             block_start = block_pose
                         elif not closing and np.linalg.norm(block_pose - block_start) > 0.008:
@@ -185,9 +259,15 @@ def main():
                                 raise RuntimeError("RG6 descended below the expected grasp height")
                             if target_index == 1 and hold_started is None and np.linalg.norm(block_pose - actual_pose - grasp_relative) > 0.025:
                                 raise RuntimeError("Block slipped relative to the RG6 during lift")
+                        if centering_grasp:
+                            grasp_target = block_pose + [
+                                *grasp_xy_offset, 0.003 + open_jaw_z_offset
+                            ]
                         world.data.joint(f"free{block}").qpos[:3] = block_pose
                     if closing and target_index >= 1:
                         world.data.qpos[6:8] = 0.038
+                    elif args.two_block:
+                        world.data.qpos[6:8] = 0.0
                     mujoco.mj_forward(world.model, world.data)
                     pose, rotation = world.pose()
                     if release_started is not None:
@@ -202,10 +282,27 @@ def main():
                                 settled_position = block_pose.copy()
                                 settled_since = tick
                             elif tick - settled_since >= 1.0:
-                                send(connection, seq, stop=True)
                                 print(f"PlaceRelease verified at {destination}. Horizontal error "
                                       f"{horizontal * 1000:.1f} mm, vertical error {height * 1000:.1f} mm, "
                                       f"support load {state['destination_load']:.2f} N.", flush=True)
+                                if args.two_block:
+                                    placed[block] = block_pose.copy()
+                                    following = next(transfers, None)
+                                    if following is not None:
+                                        block, destination = following
+                                        world.orientation = approach_orientation
+                                        approaching, closing = True, False
+                                        targets = phases = block_start = None
+                                        release_started = settled_since = settled_position = None
+                                        contact_deadline = grasp_relative = hold_started = None
+                                        target_index = dwell = support_samples = 0
+                                        next_grasp_log = 0.0
+                                        reported_baseline_slip = False
+                                        send(connection, seq, select_block=TWO_BLOCK_NAMES[block])
+                                        continue
+                                    print("Two-block derangement verified: blue then red on platform 1.",
+                                          flush=True)
+                                send(connection, seq, stop=True)
                                 return
                         else:
                             settled_position = None
@@ -222,9 +319,7 @@ def main():
                             print(f"Initial MuJoCo TCP minus RG6 midpoint [m]: {pose - actual_pose}", flush=True)
                         elif pick:
                             phases = ("descend", "lift")
-                            xy_offset = [0.003, -0.004] if args.offset_grasp else [0.0, 0.0]
-                            targets = [executor.pick_lift_descent_target(block)
-                                       + [*xy_offset, RG6_OPEN_JAW_Z_OFFSET], None]
+                            targets = [grasp_target, None]
                         else:
                             offsets = np.asarray(args.offset or DEFAULT_OFFSETS)
                             distances = np.linalg.norm(offsets, axis=1)
@@ -255,6 +350,7 @@ def main():
                             time.sleep(world.cfg.dt)
                             continue
                     if args.place and phases and phases[target_index] == "placement descent":
+                        center = executor.support_center(destination)
                         on_destination = (state["destination_load"] >= 0.2
                                           and np.linalg.norm(block_pose[:2] - center[:2]) <= 0.015
                                           and abs(block_pose[2] - center[2]) <= 0.015)
@@ -310,7 +406,7 @@ def main():
                                 print(f"MoveHolding {phase} [m]: {waypoint}", flush=True)
                             target_index += 1
                             print(f"Hold passed. Carrying to {destination}.", flush=True)
-                    target = targets[target_index]
+                    target = grasp_target if centering_grasp else targets[target_index]
                     if args.place and phases[target_index] in ("preplace", "placement descent"):
                         target = target.copy()
                         center_xy = executor.support_center(destination)[:2]
@@ -322,6 +418,9 @@ def main():
                     if grasp_orientation is not None and not approaching and target_index == 0:
                         aligned = Rotation.from_matrix(world.orientation @ rotation.T).magnitude() <= np.deg2rad(1)
                     needs_motion = error > tolerance or not aligned
+                    if centering_grasp:
+                        xy_error = np.linalg.norm(target[:2] - actual_pose[:2])
+                        needs_motion = needs_motion or xy_error > GRASP_XY_TOLERANCE
                     dwell = dwell + 1 if not needs_motion and np.linalg.norm(world.data.qvel[:6]) <= 0.025 else 0
                     if dwell >= 3:
                         phase = f" {phases[target_index]}" if phases else ""
@@ -340,7 +439,9 @@ def main():
                             send(connection, seq, velocity=[0.0] * 6)
                             time.sleep(world.cfg.dt)
                             continue
-                        if pick and not closing:
+                        if centering_grasp:
+                            print(f"Closing RG6. XY error to measured grasp target: {xy_error * 1000:.2f} mm.",
+                                  flush=True)
                             send(connection, seq, close_gripper=True)
                             connection.settimeout(15.0)
                             closing = True
